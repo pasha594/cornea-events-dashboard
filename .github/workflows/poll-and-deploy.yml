@@ -46,25 +46,24 @@ jobs:
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      # Package the site here (it already holds the new data) and deploy in a
+      # separate job: deploy-pages can miss an artifact uploaded a moment earlier
+      # in the same job, and re-running a job that uploads creates a duplicate.
+      - name: Package site for Pages
+        # Scheduled runs only redeploy when new events were stored.
+        if: steps.commit.outputs.changed == 'true' || github.event_name != 'schedule'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
   deploy:
     needs: poll
-    # Scheduled runs only redeploy when new events were stored.
     if: needs.poll.outputs.changed == 'true' || github.event_name != 'schedule'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: main # include the data commit the poll job just pushed
-
-      - uses: actions/configure-pages@v6
-
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: site
-
       - id: deployment
         uses: actions/deploy-pages@v5
 
