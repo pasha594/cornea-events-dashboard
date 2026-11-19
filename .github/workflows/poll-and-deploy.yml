@@ -1,0 +1,67 @@
+name: Poll feed and deploy
+
+on:
+  schedule:
+    # Every 15 minutes. The feed refreshes roughly hourly and holds 100 events,
+    # so this leaves plenty of margin even when GitHub delays scheduled runs.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: poll-and-deploy
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch feed and merge new events
+        run: python3 scripts/poll.py
+
+      - name: Commit new events
+        id: commit
+        run: |
+          if [ -z "$(git status --porcelain site/data)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data
+          git commit -m "Store new feed events"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: poll
+    # Scheduled runs only redeploy when new events were stored.
+    if: needs.poll.outputs.changed == 'true' || github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main # include the data commit the poll job just pushed
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5

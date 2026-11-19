@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wildfire Events</title>
+  <meta name="description" content="Every event from the Wildfire Explorer activity feed, kept beyond the feed's 100-entry window.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1>Wildfire events</h1>
+        <p class="sub">Every event from the <a href="https://fires.cornea.is" target="_blank" rel="noopener">Wildfire Explorer</a> activity feed, kept beyond the feed's 100-entry window.</p>
+      </div>
+      <p class="status" id="status" aria-live="polite">Loading events…</p>
+    </header>
+
+    <main>
+      <section class="filters" aria-label="Filters">
+        <div class="seg" role="group" aria-label="Time range" id="range">
+          <button type="button" data-range="24h">24 hours</button>
+          <button type="button" data-range="7d">7 days</button>
+          <button type="button" data-range="30d">30 days</button>
+          <button type="button" data-range="all">All time</button>
+        </div>
+        <div class="chips" id="types" role="group" aria-label="Event type"></div>
+        <select id="state" aria-label="State"><option value="">All states</option></select>
+        <input id="q" type="search" placeholder="Search fires" aria-label="Search fires" autocomplete="off">
+        <button type="button" id="reset" class="text-btn" hidden>Clear filters</button>
+      </section>
+
+      <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+      <section class="card" id="timeline-card">
+        <div class="card-head">
+          <div>
+            <h2>Events over time</h2>
+            <p class="card-sub" id="timeline-sub"></p>
+          </div>
+          <div class="seg small" role="group" aria-label="Chart or table" id="mode">
+            <button type="button" data-mode="chart">Chart</button>
+            <button type="button" data-mode="table">Table</button>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="chart" id="chart"></div>
+        <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+      </section>
+
+      <div class="two">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Most active states</h2>
+              <p class="card-sub">Events per state. Select one to filter.</p>
+            </div>
+          </div>
+          <div id="states" class="hbars"></div>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Largest fires</h2>
+              <p class="card-sub">Latest reported size in acres</p>
+            </div>
+          </div>
+          <div id="fires" class="hbars"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Event log</h2>
+            <p class="card-sub" id="log-sub"></p>
+          </div>
+          <button type="button" id="csv" class="btn">Download CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table class="log">
+            <thead><tr><th>Time</th><th>Type</th><th>Fire</th><th>State</th><th>Details</th></tr></thead>
+            <tbody id="log"></tbody>
+          </table>
+        </div>
+        <button type="button" id="more" class="btn more" hidden>Show more</button>
+      </section>
+    </main>
+
+    <footer>
+      <p>Source: <a href="https://fire-api-prod.web.app/events.atom" target="_blank" rel="noopener">Wildfire Explorer activity feed</a>. The feed only holds its latest 100 events, so a GitHub Action checks it every 15 minutes and stores every event it sees. This page also reads the live feed directly, so the newest events show up before they are stored.
+      <a href="https://github.com/pasha594/cornea-events-dashboard" target="_blank" rel="noopener">Source on GitHub</a></p>
+    </footer>
+  </div>
+  <noscript><p class="wrap">This dashboard needs JavaScript to load events.</p></noscript>
+  <script src="app.js" defer></script>
+</body>
+</html>
