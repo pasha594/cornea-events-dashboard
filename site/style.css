@@ -60,6 +60,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -109,7 +110,26 @@ select, input[type="search"] {
 }
 select { padding-right: 28px; max-width: 220px; }
 input[type="search"] { width: 200px; }
-.text-btn { border: 0; background: none; color: var(--link); cursor: pointer; padding: 4px 2px; }
+.text-btn { border: 0; background: none; color: var(--link); cursor: pointer; padding: 4px 2px; white-space: nowrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 2px; height: 32px; padding: 0 4px 0 12px; border-radius: 999px;
+  background: var(--wash-2); max-width: 100%;
+}
+.pill[hidden] { display: none; }
+.pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill button {
+  border: 0; background: none; cursor: pointer; width: 24px; height: 24px; border-radius: 50%; font-size: 16px; line-height: 1;
+  color: var(--ink-2); flex: none;
+}
+.pill button:hover { background: var(--wash-2); color: var(--ink); }
+
+.notice {
+  display: flex; align-items: baseline; gap: 8px; margin: -4px 0 16px; padding: 10px 14px; font-size: 13px; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+}
+.notice[hidden] { display: none; }
+.notice strong { color: var(--ink); font-weight: 600; }
+.notice .dot { transform: translateY(-1px); }
 
 /* Stat tiles */
 .tiles { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
@@ -171,13 +191,28 @@ th { text-align: left; font-weight: 550; color: var(--ink-2); padding: 6px 10px;
 td { padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 tbody tr:hover td { background: var(--wash); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.log { min-width: 720px; }
+.log { min-width: 700px; }
+.log .filter-row th { padding: 6px 10px 8px; font-weight: 400; border-bottom: 1px solid var(--grid); }
+.log .filter-row select, .log .filter-row input {
+  width: 100%; height: 30px; font-size: 13px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface);
+}
+.log .filter-row select { padding-right: 24px; min-width: 110px; max-width: none; }
+.log .filter-row input { min-width: 140px; }
 .log td.time { white-space: nowrap; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .log td.type { white-space: nowrap; }
 .log td.type .dot { margin-right: 6px; vertical-align: 1px; }
 .log td.fire { font-weight: 500; }
 .log td.state { white-space: nowrap; }
-.log td.details { color: var(--ink-2); }
+.log td.details { color: var(--ink-2); min-width: 240px; }
+.cell-filter {
+  border: 0; background: none; padding: 0; margin: 0; cursor: pointer; color: inherit; font: inherit; text-align: left;
+  display: inline; text-decoration: none; border-radius: 3px;
+}
+.cell-filter:hover {
+  text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--muted); text-underline-offset: 3px;
+}
+.log .ext { margin-left: 6px; color: var(--muted); font-weight: 400; font-size: 12px; padding: 0 2px; }
+.log .ext:hover { color: var(--link); text-decoration: none; }
 .more { display: block; margin: 12px auto 0; }
 
 /* Horizontal bar lists */
@@ -186,8 +221,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   display: grid; grid-template-columns: minmax(96px, 40%) 1fr; align-items: center; gap: 10px;
   padding: 5px 6px; margin: 0 -6px; border-radius: 6px; border: 0; background: none; text-align: left; color: inherit; width: calc(100% + 12px);
 }
-button.hbar { cursor: pointer; }
-a.hbar:hover { text-decoration: none; }
+button.hbar { cursor: pointer; font: inherit; }
 .hbar:hover { background: var(--wash); }
 .hbar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbar .name small { color: var(--muted); font-size: 12px; margin-left: 6px; }

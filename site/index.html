@@ -17,6 +17,7 @@
       </div>
       <p class="status" id="status" aria-live="polite">Loading events…</p>
     </header>
+    <div class="notice" id="gaps" role="status" hidden></div>
 
     <main>
       <section class="filters" aria-label="Filters">
@@ -28,6 +29,7 @@
         </div>
         <div class="chips" id="types" role="group" aria-label="Event type"></div>
         <select id="state" aria-label="State"><option value="">All states</option></select>
+        <span id="fire-pill" class="pill" hidden></span>
         <input id="q" type="search" placeholder="Search fires" aria-label="Search fires" autocomplete="off">
         <button type="button" id="reset" class="text-btn" hidden>Clear filters</button>
       </section>
@@ -64,7 +66,7 @@
           <div class="card-head">
             <div>
               <h2>Largest fires</h2>
-              <p class="card-sub">Latest reported size in acres</p>
+              <p class="card-sub">Latest reported size in acres. Select one to filter.</p>
             </div>
           </div>
           <div id="fires" class="hbars"></div>
@@ -81,7 +83,19 @@
         </div>
         <div class="table-wrap">
           <table class="log">
-            <thead><tr><th>Time</th><th>Type</th><th>Fire</th><th>State</th><th>Details</th></tr></thead>
+            <thead>
+              <tr><th>Time</th><th>Type</th><th>Fire</th><th>State</th><th>Details</th></tr>
+              <tr class="filter-row">
+                <th></th>
+                <th><select id="log-type" aria-label="Filter by type"></select></th>
+                <th>
+                  <input id="log-fire" type="search" list="log-fire-list" placeholder="All fires" aria-label="Filter by fire" autocomplete="off">
+                  <datalist id="log-fire-list"></datalist>
+                </th>
+                <th><select id="log-state" aria-label="Filter by state"></select></th>
+                <th><button type="button" id="log-reset" class="text-btn" hidden>Clear filters</button></th>
+              </tr>
+            </thead>
             <tbody id="log"></tbody>
           </table>
         </div>
@@ -90,7 +104,7 @@
     </main>
 
     <footer>
-      <p>Source: <a href="https://fire-api-prod.web.app/events.atom" target="_blank" rel="noopener">Wildfire Explorer activity feed</a>. The feed only holds its latest 100 events, so a GitHub Action checks it every 15 minutes and stores every event it sees. This page also reads the live feed directly, so the newest events show up before they are stored.
+      <p>Source: <a href="https://fire-api-prod.web.app/events.atom" target="_blank" rel="noopener">Wildfire Explorer activity feed</a>. The feed only holds its latest 100 events, so a GitHub Action checks it every 5 minutes and stores every event it sees. This page also reads the live feed directly, so the newest events show up before they are stored.
       <a href="https://github.com/pasha594/cornea-events-dashboard" target="_blank" rel="noopener">Source on GitHub</a></p>
     </footer>
   </div>

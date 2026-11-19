@@ -8,9 +8,15 @@ diffs) plus site/data/manifest.json, which the dashboard reads first.
 
 Files are only rewritten when the stored data actually changes, so a run that
 finds nothing new leaves the working tree clean and nothing gets committed.
+
+If the feed is full and shares no entry with what is already stored, more than
+100 events arrived since the last run and some were lost. That gap is recorded
+in the manifest (the dashboard shows it) and reported as gap=true in
+$GITHUB_OUTPUT so the workflow can fail loudly.
 """
 
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -90,7 +96,20 @@ def newest_first(event):
     return (event.get("published") or "", event["id"])
 
 
-def save(events, now):
+def load_gaps():
+    if not MANIFEST.exists():
+        return []
+    return json.loads(MANIFEST.read_text(encoding="utf-8")).get("gaps", [])
+
+
+def set_output(name, value):
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{name}={value}\n")
+
+
+def save(events, now, gaps):
     EVENTS_DIR.mkdir(parents=True, exist_ok=True)
     by_month = {}
     for event in events.values():
@@ -118,6 +137,7 @@ def save(events, now):
             {"month": month, "file": f"events/{month}.json", "count": len(by_month[month])}
             for month in sorted(by_month, reverse=True)
         ],
+        "gaps": gaps,
     }
     write_if_changed(MANIFEST, json.dumps(manifest, indent=2) + "\n")
 
@@ -126,11 +146,20 @@ def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entries = parse_feed(fetch(FEED_URL))
     stored = load_stored()
+    gaps = load_gaps()
 
+    gap = None
     if stored and len(entries) >= FEED_CAP and not any(e["id"] in stored for e in entries):
         # Every entry in a full feed is new: more than 100 events arrived since the
         # last run, so some were pushed out of the feed before we could store them.
-        print("WARNING: no overlap with stored events; some events may have been missed", file=sys.stderr)
+        gap = {
+            "after": max(e.get("published") or "" for e in stored.values()),
+            "before": min(e.get("published") or "" for e in entries),
+            "detected_at": now,
+        }
+        gaps.append(gap)
+        print(f"WARNING: events may be missing between {gap['after']} and {gap['before']}", file=sys.stderr)
+    set_output("gap", "true" if gap else "false")
 
     added = changed = 0
     for entry in entries:
@@ -143,8 +172,8 @@ def main():
             changed += 1
 
     print(f"Feed returned {len(entries)} entries: {added} new, {changed} changed, {len(stored)} stored in total")
-    if added or changed or not MANIFEST.exists():
-        save(stored, now)
+    if added or changed or gap or not MANIFEST.exists():
+        save(stored, now, gaps)
 
 
 if __name__ == "__main__":

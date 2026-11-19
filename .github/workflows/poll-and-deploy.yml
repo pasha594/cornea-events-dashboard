@@ -2,9 +2,9 @@ name: Poll feed and deploy
 
 on:
   schedule:
-    # Every 15 minutes. The feed refreshes roughly hourly and holds 100 events,
-    # so this leaves plenty of margin even when GitHub delays scheduled runs.
-    - cron: "7,22,37,52 * * * *"
+    # Every 5 minutes (GitHub's minimum, and the feed's CDN cache lifetime), offset
+    # from the top of the hour when GitHub's scheduler is busiest.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -23,10 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.commit.outputs.changed }}
+      gap: ${{ steps.poll.outputs.gap }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Fetch feed and merge new events
+        id: poll
         run: python3 scripts/poll.py
 
       - name: Commit new events
@@ -65,3 +67,15 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  # Runs after the data is saved and deployed, and fails on purpose so GitHub
+  # sends a failed-run notification instead of the gap passing silently.
+  report-gap:
+    needs: [poll, deploy]
+    if: always() && needs.poll.outputs.gap == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report missed events
+        run: |
+          echo "::error title=Events may have been missed::More than 100 events arrived between two polls, so the feed dropped some before they could be stored. The gap is recorded in site/data/manifest.json and shown on the dashboard."
+          exit 1

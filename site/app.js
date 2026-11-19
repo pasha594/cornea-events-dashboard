@@ -47,13 +47,16 @@
   let liveStatus = { ok: null, at: 0 };
   let pendingCount = 0;
   let lastChart = null;
-  const view = { range: 'all', types: new Set(), state: '', q: '', mode: 'chart', rows: PAGE_ROWS };
+  let fires = new Map(); // fireKey -> { key, name, state, first, label }
+  const view = { range: 'all', types: new Set(), state: '', fire: '', q: '', mode: 'chart', rows: PAGE_ROWS };
 
   // ---------- DOM helpers (all text goes through textContent) ----------
   function h(tag, props = {}, ...kids) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(props)) {
-      if (v == null || v === false) continue;
+      if (v == null) continue;
+      if (k.startsWith('aria-')) { node.setAttribute(k, String(v)); continue; } // aria-pressed needs "true"/"false"
+      if (v === false) continue;
       if (k === 'class') node.className = v;
       else if (k === 'text') node.textContent = v;
       else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
@@ -65,6 +68,8 @@
     }
     return node;
   }
+  // replaceChildren() would turn a null into the text "null", so drop empties first.
+  const fill = (node, ...kids) => node.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
   function s(tag, attrs = {}) {
     const node = document.createElementNS(SVG, tag);
     for (const [k, v] of Object.entries(attrs)) if (v != null) node.setAttribute(k, v);
@@ -175,7 +180,9 @@
       contained: pct.now, containedWas: pct.was,
     };
     ev.details = describe(ev);
-    ev.fireKey = link ? link.replace(/[?#].*$/, '') : `${name}|${ev.state}`;
+    // The fire page slug (e.g. wisconsin_county-p_2026-11-19-185525) identifies one fire across all its events.
+    const slug = link && /\/fire\/([^/?#]+)/.exec(link);
+    ev.fireKey = slug ? slug[1] : link || `${name}|${ev.state}`;
     ev.search = `${name} ${title} ${ev.state} ${ev.details}`.toLowerCase();
     return ev;
   }
@@ -232,6 +239,23 @@
       byId.set(e.id, e);
     }
     all = [...byId.values()].sort((a, b) => b.t - a.t || (a.id < b.id ? 1 : -1));
+    indexFires();
+  }
+
+  // One entry per fire, with a readable label that stays unique ("Wolf Fire, Wisconsin").
+  function indexFires() {
+    fires = new Map();
+    for (const e of all) {
+      const f = fires.get(e.fireKey);
+      if (!f) fires.set(e.fireKey, { key: e.fireKey, name: e.name, state: e.state, first: e.t });
+      else if (e.t < f.first) f.first = e.t;
+    }
+    const seen = new Map();
+    for (const f of fires.values()) {
+      f.label = `${f.name}, ${f.state}`;
+      seen.set(f.label, (seen.get(f.label) || 0) + 1);
+    }
+    for (const f of fires.values()) if (seen.get(f.label) > 1) f.label += ` (${fmtDay(f.first)})`;
   }
 
   // ---------- formatting ----------
@@ -260,27 +284,47 @@
     const inRange = all.filter((e) => e.t >= cutoff && (!q || e.search.includes(q)));
     const typeOk = (e) => view.types.size === 0 || view.types.has(e.type);
     const stateOk = (e) => !view.state || e.state === view.state;
+    const fireOk = (e) => !view.fire || e.fireKey === view.fire;
+    // Each filter's own options are counted with every *other* filter applied.
     return {
       cutoff,
-      forTypeChips: inRange.filter(stateOk),
-      forStates: inRange.filter(typeOk),
-      rows: inRange.filter((e) => typeOk(e) && stateOk(e)),
+      forTypes: inRange.filter((e) => stateOk(e) && fireOk(e)),
+      forStates: inRange.filter((e) => typeOk(e) && fireOk(e)),
+      forFires: inRange.filter((e) => typeOk(e) && stateOk(e)),
+      rows: inRange.filter((e) => typeOk(e) && stateOk(e) && fireOk(e)),
     };
   }
+  const anyFilter = () => view.types.size > 0 || !!view.state || !!view.fire || !!view.q;
   const presentTypes = (events) => [...new Set(events.map((e) => e.type))]
     .sort((a, b) => (metaFor(a).slot || 99) - (metaFor(b).slot || 99));
 
   // ---------- render ----------
   function render() {
-    const { cutoff, forTypeChips, forStates, rows } = slices();
+    const { cutoff, forTypes, forStates, forFires, rows } = slices();
     renderStatus();
-    renderControls(forTypeChips, forStates);
+    renderGaps();
+    renderControls(forTypes, forStates);
+    renderLogFilters(forTypes, forStates, forFires);
     renderTiles(rows);
     renderTimeline(rows, cutoff);
     renderStates(forStates);
-    renderFires(rows);
+    renderFires(forFires);
     renderLog(rows);
     writeHash();
+  }
+
+  function renderGaps() {
+    const gaps = (manifest && !storedError && manifest.gaps) || [];
+    const box = $('gaps');
+    box.hidden = !gaps.length;
+    if (!gaps.length) return;
+    const spans = gaps.slice(-3).reverse()
+      .map((g) => `${fmtTime(Date.parse(g.after))} and ${fmtTime(Date.parse(g.before))}`);
+    box.replaceChildren(
+      h('span', { class: 'dot warning', 'aria-hidden': 'true' }),
+      h('span', {}, h('strong', { text: 'Some events may be missing. ' }),
+        `More than 100 events arrived between two checks, so the feed dropped some before they could be stored. Affected ${spans.length > 1 ? 'periods' : 'period'}: between ${spans.join('; between ')}.`),
+    );
   }
 
   function renderStatus() {
@@ -303,29 +347,74 @@
     $('status').replaceChildren(...parts);
   }
 
-  function renderControls(forTypeChips, forStates) {
+  function renderControls(forTypes, forStates) {
     for (const btn of $('range').querySelectorAll('button')) btn.setAttribute('aria-pressed', btn.dataset.range === view.range);
     for (const btn of $('mode').querySelectorAll('button')) btn.setAttribute('aria-pressed', btn.dataset.mode === view.mode);
 
-    const typeCounts = countBy(forTypeChips, (e) => e.type);
+    const typeCounts = countBy(forTypes, (e) => e.type);
     const typeKeys = presentTypes(all);
     $('types').classList.toggle('filtered', view.types.size > 0);
     $('types').replaceChildren(...typeKeys.map((key) => h('button', {
       type: 'button', class: 'chip', 'data-type': key, 'aria-pressed': view.types.has(key),
     }, swatch(key, 'dot'), metaFor(key).label, h('span', { class: 'n', text: intFmt.format(typeCounts.get(key) || 0) }))));
 
-    const stateCounts = countBy(forStates, (e) => e.state);
+    fillStateSelect($('state'), forStates);
+
+    const pill = $('fire-pill');
+    const fire = view.fire && fires.get(view.fire);
+    pill.hidden = !view.fire;
+    if (view.fire) {
+      pill.replaceChildren(
+        h('span', { text: `Fire: ${fire ? fire.label : view.fire}` }),
+        h('button', { type: 'button', 'aria-label': 'Remove fire filter', title: 'Remove fire filter', text: '×', onclick: () => update({ fire: '' }) }),
+      );
+    }
+    if ($('q').value !== view.q) $('q').value = view.q;
+    $('reset').hidden = !anyFilter();
+  }
+
+  function fillStateSelect(select, forStates) {
+    const counts = countBy(forStates, (e) => e.state);
     const names = [...new Set(all.map((e) => e.state))].sort();
     if (view.state && !names.includes(view.state)) names.unshift(view.state);
-    const select = $('state');
     select.replaceChildren(
       h('option', { value: '', text: 'All states' }),
-      ...names.map((n) => h('option', { value: n, text: `${n} (${intFmt.format(stateCounts.get(n) || 0)})` })),
+      ...names.map((n) => h('option', { value: n, text: `${n} (${intFmt.format(counts.get(n) || 0)})` })),
     );
     select.value = view.state;
-    if ($('q').value !== view.q) $('q').value = view.q;
-    $('reset').hidden = !(view.types.size || view.state || view.q);
   }
+
+  // The event log's own filter row. It edits the same filters as the top row, so every
+  // chart and total above always describes exactly the rows in the table.
+  function renderLogFilters(forTypes, forStates, forFires) {
+    const typeSelect = $('log-type');
+    const typeCounts = countBy(forTypes, (e) => e.type);
+    const multi = view.types.size > 1;
+    fill(typeSelect,
+      h('option', { value: '', text: 'All types' }),
+      multi ? h('option', { value: '__multi', text: `${view.types.size} types`, disabled: true }) : null,
+      ...presentTypes(all).map((t) => h('option', { value: t, text: `${metaFor(t).label} (${intFmt.format(typeCounts.get(t) || 0)})` })),
+    );
+    typeSelect.value = multi ? '__multi' : view.types.size === 1 ? [...view.types][0] : '';
+
+    fillStateSelect($('log-state'), forStates);
+
+    const fireCounts = countBy(forFires, (e) => e.fireKey);
+    const options = [...fireCounts.keys()].map((k) => fires.get(k)).filter(Boolean)
+      .sort((a, b) => a.label.localeCompare(b.label));
+    $('log-fire-list').replaceChildren(...options.map((f) => {
+      const n = fireCounts.get(f.key);
+      return h('option', { value: f.label, text: `${n} ${n === 1 ? 'event' : 'events'}` });
+    }));
+    const input = $('log-fire');
+    if (document.activeElement !== input) input.value = view.fire ? (fires.get(view.fire)?.label || '') : '';
+    $('log-reset').hidden = !anyFilter();
+  }
+  const fireByLabel = (label) => {
+    const wanted = label.trim().toLowerCase();
+    for (const f of fires.values()) if (f.label.toLowerCase() === wanted) return f;
+    return null;
+  };
 
   function countBy(events, keyFn) {
     const map = new Map();
@@ -581,7 +670,7 @@
     }
     const max = counts[0][1];
     host.classList.toggle('selecting', !!view.state);
-    host.replaceChildren(
+    fill(host,
       ...top.map(([name, n]) => barRow('button', {
         type: 'button', class: name === view.state ? 'hbar active' : 'hbar', 'data-state': name,
         'aria-pressed': name === view.state, 'aria-label': `${name}: ${n} events`,
@@ -603,9 +692,12 @@
       host.replaceChildren(h('div', { class: 'empty', text: 'No size reports in this selection.' }));
       return;
     }
+    if (view.fire && !top.some((e) => e.fireKey === view.fire) && latest.has(view.fire)) top.push(latest.get(view.fire));
     const max = top[0].acres;
-    host.replaceChildren(...top.map((e) => barRow(e.link ? 'a' : 'div', {
-      class: 'hbar', href: e.link, target: e.link ? '_blank' : null, rel: e.link ? 'noopener' : null,
+    host.classList.toggle('selecting', !!view.fire);
+    host.replaceChildren(...top.map((e) => barRow('button', {
+      type: 'button', class: e.fireKey === view.fire ? 'hbar active' : 'hbar', 'data-fire': e.fireKey,
+      'aria-pressed': e.fireKey === view.fire,
       title: `${e.name}, ${e.state}: ${acresFmt.format(e.acres)} acres (reported ${fmtTime(e.t)})`,
     }, e.name, e.state, e.acres, max, `${acresFmt.format(e.acres)} ac`)));
   }
@@ -616,13 +708,27 @@
     $('log-sub').textContent = rows.length
       ? `Showing ${intFmt.format(shown.length)} of ${intFmt.format(rows.length)} events, newest first`
       : 'No events match these filters';
-    $('log').replaceChildren(...shown.map((e) => h('tr', {},
-      h('td', { class: 'time', text: fmtTime(e.t) }),
-      h('td', { class: 'type' }, swatch(e.type, 'dot'), metaFor(e.type).label),
-      h('td', { class: 'fire' }, e.link ? h('a', { href: e.link, target: '_blank', rel: 'noopener', text: e.name }) : e.name),
-      h('td', { class: 'state', text: e.state }),
-      h('td', { class: 'details', text: e.details }),
-    )));
+    // Type, fire and state values are buttons: clicking one filters to it, clicking again clears it.
+    const cellFilter = (filter, value, label, active, ...content) => h('button', {
+      type: 'button', class: active ? 'cell-filter active' : 'cell-filter', 'data-filter': filter, 'data-value': value,
+      title: active ? `Stop filtering by ${label}` : `Show only ${label}`,
+    }, ...content);
+    $('log').replaceChildren(...shown.map((e) => {
+      const typeLabel = metaFor(e.type).label;
+      const onlyType = view.types.size === 1 && view.types.has(e.type);
+      return h('tr', {},
+        h('td', { class: 'time', text: fmtTime(e.t) }),
+        h('td', { class: 'type' }, cellFilter('type', e.type, typeLabel, onlyType, swatch(e.type, 'dot'), typeLabel)),
+        h('td', { class: 'fire' },
+          cellFilter('fire', e.fireKey, e.name, view.fire === e.fireKey, e.name),
+          e.link ? h('a', {
+            class: 'ext', href: e.link, target: '_blank', rel: 'noopener',
+            title: 'Open on Wildfire Explorer', 'aria-label': `Open ${e.name} on Wildfire Explorer`, text: '↗',
+          }) : null),
+        h('td', { class: 'state' }, cellFilter('state', e.state, e.state, view.state === e.state, e.state)),
+        h('td', { class: 'details', text: e.details }),
+      );
+    }));
     const more = $('more');
     more.hidden = rows.length <= shown.length;
     more.textContent = `Show ${intFmt.format(Math.min(PAGE_ROWS, rows.length - shown.length))} more`;
@@ -651,6 +757,7 @@
     if (view.range !== 'all') p.set('range', view.range);
     if (view.types.size) p.set('type', [...view.types].join(','));
     if (view.state) p.set('state', view.state);
+    if (view.fire) p.set('fire', view.fire);
     if (view.q) p.set('q', view.q);
     if (view.mode !== 'chart') p.set('view', view.mode);
     const hash = p.toString();
@@ -661,6 +768,7 @@
     if (RANGES[p.get('range')]) view.range = p.get('range');
     view.types = new Set((p.get('type') || '').split(',').filter(Boolean));
     view.state = p.get('state') || '';
+    view.fire = p.get('fire') || '';
     view.q = p.get('q') || '';
     view.mode = p.get('view') === 'table' ? 'table' : 'chart';
   }
@@ -691,13 +799,46 @@
       const btn = ev.target.closest('button[data-state]');
       if (btn) update({ state: btn.dataset.state === view.state ? '' : btn.dataset.state });
     });
+    $('fires').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-fire]');
+      if (btn) update({ fire: btn.dataset.fire === view.fire ? '' : btn.dataset.fire });
+    });
     $('state').addEventListener('change', (ev) => update({ state: ev.target.value }));
+
+    // Event log filter row and clickable cells
+    $('log-type').addEventListener('change', (ev) => update({ types: new Set(ev.target.value ? [ev.target.value] : []) }));
+    $('log-state').addEventListener('change', (ev) => update({ state: ev.target.value }));
+    const fireInput = $('log-fire');
+    fireInput.addEventListener('input', () => {
+      if (!fireInput.value.trim()) {
+        if (view.fire) update({ fire: '' });
+        return;
+      }
+      const match = fireByLabel(fireInput.value);
+      if (match && match.key !== view.fire) update({ fire: match.key });
+    });
+    fireInput.addEventListener('blur', () => {
+      // Typed text that isn't a known fire snaps back to the active filter.
+      fireInput.value = view.fire ? (fires.get(view.fire)?.label || '') : '';
+    });
+    $('log-reset').addEventListener('click', () => update({ types: new Set(), state: '', fire: '', q: '' }));
+    $('log').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-filter]');
+      if (!btn) return;
+      const { filter, value } = btn.dataset;
+      if (filter === 'type') {
+        const only = view.types.size === 1 && view.types.has(value);
+        update({ types: new Set(only ? [] : [value]) });
+      } else {
+        update({ [filter]: view[filter] === value ? '' : value });
+      }
+    });
     let timer;
     $('q').addEventListener('input', (ev) => {
       clearTimeout(timer);
       timer = setTimeout(() => update({ q: ev.target.value }), 150);
     });
-    $('reset').addEventListener('click', () => update({ types: new Set(), state: '', q: '' }));
+    $('reset').addEventListener('click', () => update({ types: new Set(), state: '', fire: '', q: '' }));
     $('more').addEventListener('click', () => {
       view.rows += PAGE_ROWS;
       renderLog(slices().rows);
