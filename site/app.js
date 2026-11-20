@@ -164,12 +164,28 @@
       else if (lead === null) lead = line;
     }
     const title = decode(String(raw.title || '')).trim();
-    const name = lead || title.replace(/^[^:]*:\s*/, '') || 'Unknown';
+    const name = raw.fire_name || lead || title.replace(/^[^:]*:\s*/, '') || 'Unknown';
     const link = /^https?:\/\//i.test(raw.link || '') ? raw.link : null;
     const type = raw.category || 'unknown';
     metaFor(type);
-    const size = parseSize(fields.size);
-    const pct = parsePct(fields.containment);
+    let size = parseSize(fields.size);
+    let pct = parsePct(fields.containment);
+    // Events stored from the admin API carry structured facts instead of an HTML summary.
+    const facts = raw.facts;
+    if (facts && typeof facts === 'object') {
+      if (facts.type === 'new_fire') {
+        size = { now: facts.acres ?? null, was: null };
+        if (facts.county) fields.location = facts.state ? `${facts.county} County, ${facts.state}` : `${facts.county} County`;
+        else if (facts.state) fields.location = facts.state;
+        if (facts.cause) fields.cause = facts.cause;
+      } else if (facts.type === 'perimeter') {
+        size = { now: facts.acres ?? null, was: facts.previous_acres ?? null };
+      } else if (facts.type === 'change') {
+        if (type === 'containment') pct = { now: facts.current ?? null, was: facts.previous ?? null };
+        else size = { now: facts.current ?? null, was: facts.previous ?? null };
+      }
+      if (facts.source) fields.source = facts.source;
+    }
     const ev = {
       id: raw.id,
       t: Date.parse(raw.published || raw.updated) || 0,
@@ -235,7 +251,9 @@
     const byId = new Map(stored.map((e) => [e.id, e]));
     pendingCount = 0;
     for (const e of live) {
-      if (!byId.has(e.id)) pendingCount++;
+      // Stored events win: they may come from the admin API, which is richer than the feed.
+      if (byId.has(e.id)) continue;
+      pendingCount++;
       byId.set(e.id, e);
     }
     all = [...byId.values()].sort((a, b) => b.t - a.t || (a.id < b.id ? 1 : -1));
@@ -753,7 +771,9 @@
 
   // ---------- URL hash keeps filters shareable ----------
   function writeHash() {
-    const p = new URLSearchParams();
+    // Only touch this tab's keys; the tab bar and other tabs keep theirs.
+    const p = new URLSearchParams(location.hash.slice(1));
+    for (const key of ['range', 'type', 'state', 'fire', 'q', 'view']) p.delete(key);
     if (view.range !== 'all') p.set('range', view.range);
     if (view.types.size) p.set('type', [...view.types].join(','));
     if (view.state) p.set('state', view.state);

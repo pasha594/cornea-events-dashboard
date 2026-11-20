@@ -1,15 +1,30 @@
 {
   "feed": "https://fire-api-prod.web.app/events.atom",
-  "updated_at": "2026-11-20T10:37:23Z",
-  "total": 153,
-  "oldest": "2026-11-18T23:04:11.796834Z",
-  "newest": "2026-11-20T09:50:37.943277Z",
+  "updated_at": "2026-11-20T16:38:52Z",
+  "total": 521,
+  "oldest": "2026-11-09T21:51:45.785642Z",
+  "newest": "2026-11-20T15:52:04.358420Z",
   "months": [
     {
       "month": "2026-11",
       "file": "events/2026-11.json",
-      "count": 153
+      "count": 521
     }
   ],
-  "gaps": []
+  "gaps": [],
+  "api_backfilled": {
+    "events": true,
+    "alerts": true
+  },
+  "alerts": {
+    "updated_at": "2026-11-20T16:38:52Z",
+    "total": 9,
+    "months": [
+      {
+        "month": "2026-11",
+        "file": "alerts/2026-11.json",
+        "count": 9
+      }
+    ]
+  }
 }

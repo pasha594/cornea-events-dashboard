@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """Fetch the Wildfire Explorer Atom feed and merge its entries into site/data.
 
-The feed only ever holds the latest 100 entries, so this script runs on a
-schedule and keeps every entry it has seen. Events are stored in one JSON file
-per month (site/data/events/YYYY-MM.json, one event per line for readable git
-diffs) plus site/data/manifest.json, which the dashboard reads first.
-
-Files are only rewritten when the stored data actually changes, so a run that
-finds nothing new leaves the working tree clean and nothing gets committed.
+The feed only ever holds the latest 100 entries and needs no credentials. The
+admin API (scripts/poll_admin.py) is the complete source and runs first; this
+poller is the fallback that keeps events flowing if the API can't be reached.
+It never overwrites an event the API already supplied, since those are richer.
 
 If the feed is full and shares no entry with what is already stored, more than
-100 events arrived since the last run and some were lost. That gap is recorded
+100 events arrived since the last run and some may be lost. That gap is recorded
 in the manifest (the dashboard shows it) and reported as gap=true in
 $GITHUB_OUTPUT so the workflow can fail loudly.
 """
 
-import json
 import os
 import sys
 import time
@@ -24,11 +20,11 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import store  # noqa: E402
+
 FEED_URL = "https://fire-api-prod.web.app/events.atom"
 ATOM = "{http://www.w3.org/2005/Atom}"
-DATA_DIR = Path(__file__).resolve().parent.parent / "site" / "data"
-EVENTS_DIR = DATA_DIR / "events"
-MANIFEST = DATA_DIR / "manifest.json"
 FEED_CAP = 100  # the feed never returns more than this many entries
 
 
@@ -77,31 +73,6 @@ def parse_feed(xml_bytes):
     return entries
 
 
-def load_stored():
-    stored = {}
-    for path in sorted(EVENTS_DIR.glob("*.json")):
-        for event in json.loads(path.read_text(encoding="utf-8")):
-            stored[event["id"]] = event
-    return stored
-
-
-def write_if_changed(path, text):
-    if path.exists() and path.read_text(encoding="utf-8") == text:
-        return False
-    path.write_text(text, encoding="utf-8")
-    return True
-
-
-def newest_first(event):
-    return (event.get("published") or "", event["id"])
-
-
-def load_gaps():
-    if not MANIFEST.exists():
-        return []
-    return json.loads(MANIFEST.read_text(encoding="utf-8")).get("gaps", [])
-
-
 def set_output(name, value):
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
@@ -109,44 +80,12 @@ def set_output(name, value):
             handle.write(f"{name}={value}\n")
 
 
-def save(events, now, gaps):
-    EVENTS_DIR.mkdir(parents=True, exist_ok=True)
-    by_month = {}
-    for event in events.values():
-        month = (event.get("published") or "")[:7] or "unknown"
-        by_month.setdefault(month, []).append(event)
-
-    for month, month_events in by_month.items():
-        month_events.sort(key=newest_first, reverse=True)
-        lines = [json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in month_events]
-        write_if_changed(EVENTS_DIR / f"{month}.json", "[\n" + ",\n".join(lines) + "\n]\n")
-
-    # An event whose published date moved to another month leaves a stale shard behind.
-    for path in EVENTS_DIR.glob("*.json"):
-        if path.stem not in by_month:
-            path.unlink()
-
-    published = sorted(e["published"] for e in events.values() if e.get("published"))
-    manifest = {
-        "feed": FEED_URL,
-        "updated_at": now,
-        "total": len(events),
-        "oldest": published[0] if published else None,
-        "newest": published[-1] if published else None,
-        "months": [
-            {"month": month, "file": f"events/{month}.json", "count": len(by_month[month])}
-            for month in sorted(by_month, reverse=True)
-        ],
-        "gaps": gaps,
-    }
-    write_if_changed(MANIFEST, json.dumps(manifest, indent=2) + "\n")
-
-
 def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entries = parse_feed(fetch(FEED_URL))
-    stored = load_stored()
-    gaps = load_gaps()
+    stored = store.load_collection("events")
+    manifest = store.load_manifest()
+    gaps = manifest.get("gaps", [])
 
     gap = None
     if stored and len(entries) >= FEED_CAP and not any(e["id"] in stored for e in entries):
@@ -167,13 +106,17 @@ def main():
         if previous is None:
             stored[entry["id"]] = {**entry, "first_seen": now}
             added += 1
+        elif previous.get("source") == "api":
+            continue  # the admin API's version of this event is richer; keep it
         elif any(previous.get(key) != value for key, value in entry.items()):
             stored[entry["id"]] = {**entry, "first_seen": previous.get("first_seen", now)}
             changed += 1
 
     print(f"Feed returned {len(entries)} entries: {added} new, {changed} changed, {len(stored)} stored in total")
-    if added or changed or gap or not MANIFEST.exists():
-        save(stored, now, gaps)
+    if added or changed or gap or not store.MANIFEST.exists():
+        manifest["feed"] = FEED_URL
+        manifest["gaps"] = gaps
+        store.save_events(stored, now, manifest)
 
 
 if __name__ == "__main__":

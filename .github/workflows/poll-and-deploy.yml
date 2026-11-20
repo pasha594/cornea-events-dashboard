@@ -2,8 +2,9 @@ name: Poll feed and deploy
 
 on:
   schedule:
-    # Every 5 minutes (GitHub's minimum, and the feed's CDN cache lifetime), offset
-    # from the top of the hour when GitHub's scheduler is busiest.
+    # Every 5 minutes (GitHub's minimum), offset from the top of the hour when
+    # GitHub's scheduler is busiest. GitHub runs schedules on a best-effort basis;
+    # the admin API keeps everything, so a late run only delays storing, never loses.
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
   push:
@@ -12,7 +13,7 @@ on:
 permissions:
   contents: write
   pages: write
-  id-token: write
+  id-token: write # lets the run prove its identity to Google (Workload Identity) and to Pages
 
 concurrency:
   group: poll-and-deploy
@@ -24,14 +25,43 @@ jobs:
     outputs:
       changed: ${{ steps.commit.outputs.changed }}
       gap: ${{ steps.poll.outputs.gap }}
+      admin: ${{ steps.admin.outcome }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Fetch feed and merge new events
+      # Keyless: GitHub's identity token is exchanged for a one-hour access token as the
+      # admin API's service account. Set up once by scripts/setup-workload-identity.sh,
+      # which only trusts this repo's main branch. Switched on by the repository
+      # variable ADMIN_API=on once that setup exists.
+      - name: Authenticate as the admin API's service account
+        id: gcp
+        if: vars.ADMIN_API == 'on'
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/791588016576/locations/global/workloadIdentityPools/cornea-events-dashboard/providers/github
+          service_account: fire-api-prod-admin-api@gentle-land-333822.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_scopes: openid,https://www.googleapis.com/auth/userinfo.email
+          create_credentials_file: false
+          export_environment_variables: false
+
+      # The complete source: pages back until it reaches what is already stored.
+      - name: Fetch fire events and official alerts from the admin API
+        id: admin
+        if: steps.gcp.outcome == 'success'
+        continue-on-error: true
+        env:
+          ADMIN_TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: python3 scripts/poll_admin.py
+
+      # The fallback that needs no credentials. Runs after the API so it only flags a
+      # gap when the API couldn't fill it.
+      - name: Fetch the public feed
         id: poll
         run: python3 scripts/poll.py
 
-      - name: Commit new events
+      - name: Commit new data
         id: commit
         run: |
           if [ -z "$(git status --porcelain site/data)" ]; then
@@ -41,7 +71,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add site/data
-          git commit -m "Store new feed events"
+          git commit -m "Store new events and alerts"
           git pull --rebase origin main
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -50,7 +80,7 @@ jobs:
       # separate job: deploy-pages can miss an artifact uploaded a moment earlier
       # in the same job, and re-running a job that uploads creates a duplicate.
       - name: Package site for Pages
-        # Scheduled runs only redeploy when new events were stored.
+        # Scheduled runs only redeploy when something new was stored.
         if: steps.commit.outputs.changed == 'true' || github.event_name != 'schedule'
         uses: actions/upload-pages-artifact@v5
         with:
@@ -67,14 +97,22 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v5
 
-  # Runs after the data is saved and deployed, and fails on purpose so GitHub
-  # sends a failed-run notification instead of the gap passing silently.
-  report-gap:
+  # Runs after the data is saved and deployed, and fails on purpose so GitHub sends
+  # a failed-run notification instead of a problem passing silently.
+  report:
     needs: [poll, deploy]
-    if: always() && needs.poll.outputs.gap == 'true'
+    if: always() && (needs.poll.outputs.gap == 'true' || (vars.ADMIN_API == 'on' && needs.poll.outputs.admin != 'success'))
     runs-on: ubuntu-latest
     steps:
-      - name: Report missed events
+      - name: Report problems
+        env:
+          GAP: ${{ needs.poll.outputs.gap }}
+          ADMIN: ${{ needs.poll.outputs.admin }}
         run: |
-          echo "::error title=Events may have been missed::More than 100 events arrived between two polls, so the feed dropped some before they could be stored. The gap is recorded in site/data/manifest.json and shown on the dashboard."
+          if [ "$ADMIN" != "success" ] && [ "${{ vars.ADMIN_API }}" = "on" ]; then
+            echo "::error title=Admin API not polled::Fetching from the admin API ${ADMIN:-did not run}. Events still came from the public feed, but official alerts were not updated. Check the 'Authenticate' and 'Fetch fire events' steps of the poll job."
+          fi
+          if [ "$GAP" = "true" ]; then
+            echo "::error title=Events may have been missed::The public feed overflowed between two polls and the admin API could not fill the gap. It is recorded in site/data/manifest.json and shown on the dashboard."
+          fi
           exit 1
