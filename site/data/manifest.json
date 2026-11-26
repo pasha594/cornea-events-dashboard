@@ -1,14 +1,14 @@
 {
   "feed": "https://fire-api-prod.web.app/events.atom",
-  "updated_at": "2026-11-26T02:46:51Z",
-  "total": 987,
+  "updated_at": "2026-11-26T11:33:27Z",
+  "total": 990,
   "oldest": "2026-11-09T21:51:45.785642Z",
-  "newest": "2026-11-26T01:51:25.854444Z",
+  "newest": "2026-11-26T06:51:32.471562Z",
   "months": [
     {
       "month": "2026-11",
       "file": "events/2026-11.json",
-      "count": 987
+      "count": 990
     }
   ],
   "gaps": [],
